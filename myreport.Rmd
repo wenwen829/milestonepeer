@@ -1,0 +1,134 @@
+---
+title: 'Peer-graded Assignment: Milestone Report'
+author: "Wenwen Liu"
+date: "7/13/2020"
+output: html_document
+---
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+knitr::opts_chunk$set(message = FALSE)
+```
+```{r libraries, echo=FALSE}
+library(tidytext, warn.conflicts = FALSE)
+library(tidyr, warn.conflicts = FALSE)
+library(dplyr, warn.conflicts = FALSE)
+library(ggplot2, warn.conflicts = FALSE)
+library(qdapRegex, warn.conflicts = FALSE)
+library(stringi)
+library(stringr)
+```
+## Introduction
+This is a report generated as a part of the week 2 peer review assignment of the Data Science Capstone course by Johns Hopkins University on Coursera. The purpose is to demonstrate that the author has downloaded the data successfully and has performed preliminary exploratory analysis. Complete RMD file can be found (here)[]
+
+## Summary of Dataset
+A summary of all three data sources used for this assignment is presented below with information on file size, line and word counts. It shows that the blog data has the largest file size with the highest word counts and the lowest line counts while twitter is the exact opposite of it with lowest word count and highest line counts. This manifests to a degree how the users' writing pattern differs across platoform. 
+```{r datasum,cache=TRUE}
+setwd("C:/Users/pc/Dropbox/JHUdatascience/Rcode/9-capstone/final")
+file.list = c("en_US/en_US.blogs.txt", "en_US/en_US.news.txt", "en_US/en_US.twitter.txt")
+text <- list(blogs = "", news = "", twitter = "")
+data.summary <- matrix(0, nrow = 3, ncol = 3, dimnames = list(c("Blogs", "News", "Twitter"),c("File size, Mb", "Lines", "Words")))
+for (i in 1:3) {
+  con <- file(file.list[i], "rb")
+  text[[i]] <- readLines(con, encoding = "UTF-8",skipNul = TRUE)
+  close(con)
+  data.summary[i,1] <- round(file.info(file.list[i])$size / 1024^2, 2)
+  data.summary[i,2] <- length(text[[i]])
+  data.summary[i,3] <- sum(stri_count_words(text[[i]]))
+}
+library(knitr)
+kable(data.summary)
+```
+
+## Word Clouds
+While being fully aware that a word cloud composed of single words most likely won't provide any useful insight on the natural language of interest, the author still decided to feature one because it looks pretty on a report. Sorry for being such a noob, [J. Harris](https://getthematic.com/insights/the-5-major-faults-of-word-clouds-and-how-they-harm-your-insights). :,)
+```{r worcloud, cache=TRUE, warning=FALSE}
+library(tm);library(wordcloud);library(RColorBrewer)
+set.seed(123)
+blogs_sample <- sample(text$blogs, 0.01*length(text$blogs))
+news_sample <- sample(text$news, 0.01*length(text$news))
+twitter_sample <- sample(text$twitter, 0.01*length(text$twitter))
+sampled_data <- c(blogs_sample, news_sample, twitter_sample)
+# remove emoticons
+sampled_data <- iconv(sampled_data, 'UTF-8', 'ASCII')
+corpus <- Corpus(VectorSource(as.data.frame(sampled_data, stringsAsFactors = FALSE))) 
+corpus <- corpus %>%
+  tm_map(tolower) %>%  
+  tm_map(PlainTextDocument) %>%
+  tm_map(removePunctuation) %>%
+  tm_map(str_replace_all,"[^A-z ]", " ") %>%
+  tm_map(str_replace_all,"\'[sS]", " ") %>%
+  tm_map(removeWords, stopwords("english")) %>%
+  tm_map(str_replace_all," na ", " ") %>%
+  tm_map(removeNumbers) %>%
+  tm_map(stripWhitespace)
+term.doc.matrix <-as.matrix(TermDocumentMatrix(corpus))
+word.freqs <- sort(rowSums(term.doc.matrix), decreasing=TRUE) 
+dm <- data.frame(word=names(word.freqs), freq=word.freqs)
+wordcloud(dm$word, dm$freq, min.freq= 500, random.order=TRUE, rot.per=.25, colors=brewer.pal(8, "Spectral"))
+```
+
+In order to speed up the analytical process, the above word cloud was generated using only 1% of the original dataset. 
+
+## Tokenization
+The same sampled 1% of the combined original dataset was also used for tokenizaton and the top 15 frequency distribution of the unigram, bigram and trigram are shown below. 
+```{r uni, warning=FALSE}
+data_sample = c(twitter_sample, blogs_sample, news_sample)
+NotKnown <- grep("NotKnown", iconv(data_sample, "latin1", "ASCII", sub="NotKnown"))
+data_sample <- tolower(data_sample[-NotKnown])
+data_sample <- gsub("&amp", "", data_sample)
+data_sample <- gsub("rt :|@[a-z,A-Z]*: ", "", data_sample) 
+data_sample <- gsub("@\\w+", "", data_sample)
+data_sample <- gsub("[[:digit:]]", "", data_sample) # remove digits
+data_sample <- gsub(" #\\s*","", data_sample)  # remove hash tags 
+data_sample <- rm_white(data_sample) # remove extra spaces
+data_sample_df <- tibble(line = 1:length(data_sample), text = data_sample)
+```
+
+```{r graphs}
+UnigramFreq <- data_sample_df %>%
+  unnest_tokens(unigram, text, token = "ngrams", n = 3) %>%
+  separate(unigram, c("word1"), sep = " ", 
+           extra = "drop", fill = "right") %>%
+  filter(!word1 %in% stop_words$word,
+         !word1=="NA") %>%
+  unite(unigram, word1, sep = " ") %>%
+  count(unigram, sort = TRUE)
+
+ggplot(head(UnigramFreq,15), aes(reorder(unigram,n), n)) +   
+  geom_bar(stat="identity", fill="#69b3a2", color="#e9ecef") + coord_flip() + 
+  xlab("Unigrams") + ylab("Frequency") +
+  ggtitle("Most Frequent Unigrams")
+
+BigramFreq <- data_sample_df %>%
+  unnest_tokens(bigram, text, token = "ngrams", n = 3) %>%
+  separate(bigram, c("word1", "word2"), sep = " ", 
+           extra = "drop", fill = "right") %>%
+  filter(!word1 %in% stop_words$word,
+         !word2 %in% stop_words$word,
+         !word1=="NA"&!word2=="NA") %>%
+  unite(bigram, word1, word2, sep = " ") %>%
+  count(bigram, sort = TRUE)
+
+ggplot(head(BigramFreq,15), aes(reorder(bigram,n), n)) +   
+  geom_bar(stat="identity", fill="#69b3a2", color="#e9ecef") + coord_flip() + 
+  xlab("Bigrams") + ylab("Frequency") +
+  ggtitle("Most Frequent Bigrams")
+TrigramFreq <- data_sample_df %>%
+  unnest_tokens(trigram, text, token = "ngrams", n = 3) %>%
+  separate(trigram, c("word1", "word2", "word3"), sep = " ", 
+           extra = "drop", fill = "right") %>%
+  filter(!word1 %in% stop_words$word,
+         !word2 %in% stop_words$word,
+         !word3 %in% stop_words$word,
+         !word1=="NA"&!word2=="NA"&!word3=="NA") %>%
+  unite(trigram, word1, word2, word3, sep = " ") %>%
+  count(trigram, sort = TRUE)
+
+ggplot(head(TrigramFreq,15), aes(reorder(trigram,n), n)) +   
+  geom_bar(stat="identity", fill="#69b3a2", color="#e9ecef")+ coord_flip() + 
+  xlab("Trigrams") + ylab("Frequency") +
+  ggtitle("Most Frequent Trigrams")
+
+```
+## Interesting Findings and Thoughts
+The package used for tokenization makes such a huge difference when it comes to how much time is required to generate the word-grams. The tm+RWeka approach used by many is the slowest for me while tidytext only takes around one minute user time to present the final results. This report is generated with unnext_token() that can be found with tidytext package. The stop words and NAs generated while cleaning have been removed, however, I do think that when working on generating a predictive model, stop words should still be included as they are the most commonly observed instances in English and therefore should always be suggested to the users as part of the auto-complete function.  
